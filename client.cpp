@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <errno.h>
 
 using namespace std;
 
@@ -33,6 +34,10 @@ enum errNrs{
 const char *errmsg[] = {
 	"Vsechno probehlo ok.\n",
 	"Chybne zadane parametry.\n",
+	"Chyba pri getaddrinfo.\n",
+	"Chyba pri ziskavani socket descriptoru.\n",
+	"Chyba pri pripojovani.\n",
+	"Chyba pri odesilani pozadavku.\n",
 	"Nastala neznama nebo neocekavana chyba.\n"
 };
 
@@ -53,6 +58,7 @@ typedef struct Params {
 void getParams(int argc, char **argv, TParams *params){
 	int c;
 	
+        int option_index = 0;
 	while (1)
     {	static struct option long_options[] =
         {   {"login",     no_argument,       0, 'L'},
@@ -67,7 +73,6 @@ void getParams(int argc, char **argv, TParams *params){
             {"byUid",    required_argument, 0, 'u'},
             {0, 0, 0, 0}
         };
-        int option_index = 0;
      
         c = getopt_long (argc, argv, "LUGNHSh:p:l:u:", long_options, &option_index);
      
@@ -101,13 +106,19 @@ void getParams(int argc, char **argv, TParams *params){
                params->portNr = optarg;
                break;    
             case 'l':
-               params->findLogin.append(' ', 1);
-               params->findLogin.append(optarg, sizeof(optarg));
+			   optind--;
+			   for( ;optind < argc && *argv[optind] != '-'; optind++){		//SOMETHING WRONG HERE....
+					params->findLogin.append(argv[optind]);  
+					params->findLogin.append(" ");  
+			   }
                break;     
             case 'u':
-               params->findUid.append(' ', 1);
-               params->findUid.append(optarg, sizeof(optarg));
-               break;    
+			   optind--;
+			   for( ;optind < argc && *argv[optind] != '-'; optind++){		//SOMETHING WRONG HERE....
+					params->findUid.append(argv[optind]);  
+					params->findUid.append(" ");  
+			   }
+               break;   
             case '?':
                params->error = EPARAMS;
                break;     
@@ -118,19 +129,11 @@ void getParams(int argc, char **argv, TParams *params){
     return;
 }
 
-void parseRecvdData(string received){
-	size_t pos;
-	while((pos = received.find(":")) != string::npos){
-		received.replace(pos, 1, " ");
-	}
-	
-	cout << received;
-}
-
 void setConnection(TParams *params){
-	 struct addrinfo hints, *res;
-	 int sockFd;
-	 size_t recvd;
+	cout << "Got in the set connection function..\n";
+	 struct addrinfo hints, *res, *p;
+	 int sockFd, recvd;
+	 void *transfer;
 	 char buffer[1024];
 	 string response;
 	 response.clear();
@@ -144,29 +147,36 @@ void setConnection(TParams *params){
 		params->error = ERR_GADDINFO;
 		return;
      }
-     if((sockFd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0){
-	 	params->error = ERR_SOCKET;
-		freeaddrinfo(res);
-        return;
-     }
-     if(connect(sockFd, res->ai_addr, res->ai_addrlen) < 0){
-		params->error = ERR_CONNECT;
-		freeaddrinfo(res);
-        return;
-     }
-     if(send(sockFd, params, sizeof(params), 0) < 0){
+     cout << "Got addrinfo" << endl;
+     for(p = res; p != NULL; p = p->ai_next) {
+        if ((sockFd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+            continue;
+        }
+		cout << "Got socket descriptor: " << sockFd << endl;
+        if (connect(sockFd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockFd);
+            continue;
+        }
+
+        break;
+    }
+     cout << "Connected to eva..." << endl;
+     transfer = (void*)params;
+     if(send(sockFd, transfer, sizeof(struct Params), 0) < 0){
+		printf( "Error sending msg: %s\n", strerror( errno ) );
 		params->error = ERR_SEND;
 		freeaddrinfo(res);
         return;
      }
-     
+     cout << "Message sent." << endl;
      //here comes some magic....if necessary.
      
      while((recvd = recv(sockFd, buffer, sizeof(buffer), MSG_WAITALL)) != 0){
+		cout << "Receiving." << endl;
 		response.append(buffer, recvd);
      }
      
-     parseRecvdData(response);
+	cout << response;
      
      freeaddrinfo(res);
      return;
@@ -191,5 +201,9 @@ int main (int argc, char **argv)
 	}
 	
 	setConnection(&params);
-
+	if(params.error != EOK){
+		cout << errmsg[params.error] ;
+		return 1;
+	}
+	return 0;
 }

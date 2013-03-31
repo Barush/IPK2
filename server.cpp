@@ -20,12 +20,18 @@ using namespace std;
 
 #define BACKLOG 10     // max pocet spojeni ve fronte
 
+string helpmsg = ("\nProgram server\n"
+			"Barbora Skrivankova, xskriv01@stud.fit.vutbr.cz\n"
+			"Pri prichozim pozadavku odesle zpet pozadovana data z /etc/passwd\n"
+			"Pouziti:\n\n ./server -p <port number>\n");
+
 enum errNrs{
 	EOK = 0,
 	EPARAMS,
 	ERR_GADDINFO,
 	ERR_BIND,
 	ERR_SEND,
+	ERR_REQ,
 	EUNKNOWN
 };
 
@@ -57,47 +63,88 @@ void sigchld_handler(int s)
     while(waitpid(-1, NULL, WNOHANG) > 0);
 }
 
+vector<string> &split(const string &s, char delim, vector<string> &elems) {
+    stringstream ss(s);
+    string item;
+    while (getline(ss, item, delim)) {
+        elems.push_back(item);
+    }
+    return elems;
+}
+
+
+vector<string> split(const string &s, char delim) {
+    vector<string> elems;
+    return split(s, delim, elems);
+}
+
+void fillItIn(TParams *request, string *chosen, vector<string> cell){
+	if(request->login){
+		(*chosen).append(cell[0]);
+		(*chosen).append(" ");
+	}
+	if(request->uid){
+		(*chosen).append(cell[2]);
+		(*chosen).append(" ");
+	}
+	if(request->gid){
+		(*chosen).append(cell[3]);
+		(*chosen).append(" ");
+	}
+	if(request->name){
+		(*chosen).append(cell[4]);
+		(*chosen).append(" ");
+	}
+	if(request->homeDir){
+		(*chosen).append(cell[5]);
+		(*chosen).append(" ");
+	}
+	if(request->shell){
+		(*chosen).append(cell[6]);
+		(*chosen).append(" ");
+	}
+	(*chosen).append("\n");
+	return;
+}
+
 string parsePasswd(TParams *request){
-	FILE *passwd;
-	string chosen;
+	fstream passwd;
+	string chosen, line;
 	char buffer[2048];
-	size_t pos, star = 0;
-	string pom, pomPiece, line, info;
+	vector<string> cell, wanted;
 	
-	passwd = fopen("/etc/passwd", "r");
-	while(getline() != 0){
+	passwd.open("/etc/passwd", fstream::in);
+	while((passwd.getline(buffer, 2048)) != 0){
+		line.append(buffer);
+		cell = split(line, ':');
 		if(request->findLogin.length() > 0 ){
-			line.append(buffer);
-			pos = line.find(":");
-			if(pos != string::npos){
-				info = line.substr(start, pos);
-			}
-			pom = request.findLogin;
-			while(pom.length() > 0){
-				pos = pom.find(" ");
-				if(pos != string::npos){
-					pomPiece = pom.substr(start, pos);
-					pom.erase(start, pos);
-				}
-				if(info == pomPiece){
-					//POUZIJU SPLIT ZE STACK OVERFLOW (includy uz jsou) a do stringu nahazu jednotlivy kousky /etc/passwd, podle params...
+			wanted = split(request->findLogin, ' ');
+			for(unsigned i = 0; i < wanted.size(); i++){
+				if(wanted[i] == cell[0]){
+					fillItIn(request, &chosen, cell);
 				}
 			}
 		}
 		else if(request->findUid.length() > 0){
+			wanted = split(request->findUid, ' ');
+			for(unsigned i = 0; i < wanted.size(); i++){
+				if(wanted[i] == cell[2]){
+					fillItIn(request, &chosen, cell);				
+				}
+			}
 		}
 		else{
-			// error
+			request->error = ERR_REQ;
 			return chosen;
 		}
 	}
+	return chosen;
 }
 
 int serverFunc(string portNr){
 	 int yes = 1;
 	 struct addrinfo hints, *res, *p;
 	 int sockFd, childFd;
-	 size_t recvd;    
 	 struct sockaddr_storage their_addr; // connector's address information
      socklen_t sin_size;
      char s[INET6_ADDRSTRLEN];
@@ -105,14 +152,15 @@ int serverFunc(string portNr){
 	 char buffer[1024];
 	 string response;
 	 response.clear();
-	 TParams clientReq;
+	 void *clientReqVoid = NULL;
+	 TParams *clientReq = NULL;
 	 
 	 memset(&buffer, 0, sizeof(buffer));	
      memset(&hints, 0, sizeof(hints));          
      hints.ai_family = AF_INET;
      hints.ai_socktype = SOCK_STREAM;
      
-     if(getaddrinfo(NULL, portNr, &hints, &res) != 0){
+     if(getaddrinfo(NULL, portNr.c_str(), &hints, &res) != 0){
 		return ERR_GADDINFO;
      }
 
@@ -173,10 +221,11 @@ int serverFunc(string portNr){
 
         if (!fork()) { // this is the child process
             close(sockFd); // child doesn't need the listener
-            if(recv(sockFd, clientReq, sizeof(clientReq), MSG_WAITALL) <= 0)
+            if(recv(sockFd, clientReqVoid, sizeof(clientReq), MSG_WAITALL) <= 0)
 				perror("recv");
-			string result = parsePasswd(&clientReq);
-            if (send(childFd, result, sizeof(result), 0) == -1)
+			clientReq = (TParams*) clientReqVoid;
+			string result = parsePasswd(clientReq);
+            if (send(childFd, result.data(), sizeof(result), 0) == -1)
                 perror("send");
             close(childFd);
             exit(0);
@@ -188,5 +237,22 @@ int serverFunc(string portNr){
 
 int main(int argc, char **argv)
 {
+	string portNr;
+	if(argc != 3){
+		cout << "Wrong params!" << endl;
+		cout << helpmsg;
+		return 1;
+	}
+	else if(strcmp(argv[1], "-p") == 0){
+		portNr = argv[2];
+	}
+	else {
+		cout << "Wrong params!" << endl;
+		cout << helpmsg;
+		return 1;
+	}
+	
+	serverFunc(portNr);
+	return 0;
 }
 
