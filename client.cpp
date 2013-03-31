@@ -185,6 +185,10 @@ int main (int argc, char **argv)
 			cout << helpmsg;
 		return 1;
 	}
+	if((params.findLogin.length() > 0) && (params.findUid.length() >0)){
+		cout << helpmsg;
+		return 1;
+	}
 	
 	setConnection(&params);
 
